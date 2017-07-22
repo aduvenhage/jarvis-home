@@ -9,7 +9,9 @@
 #include <deviceconfig.h>
 #include <containers.h>
 #include <taskmanager.h>
-#include "phone_numbers.h"          // defines PHONE_NO_DEFAULT
+
+
+#include "phone_numbers.h"          // defines PHONE_NO_DEFAULT "xxxxxxxxxxxx"
 
 
 // constants
@@ -60,7 +62,7 @@ bool                          gSensorLowVbSmsOn = true;             ///< sms sen
 bool                          gSensorTimeoutSmsOn = true;           ///< sms sensor timeout events if set to true
 bool                          gPowerFailureSmsOn = true;            ///< sms power failure events if set to true
 
-char                          gszPhoneNo[PHONE_NO_MAX_CHARS+1] = PHONE_NO_DEFAULT;   ///< phone number used for event sms's
+char                          gszPhoneNo[16] = {0};
 
 
 
@@ -288,25 +290,13 @@ void processGprsEvents()
         }
         else if (strncmp(msg.m_pszText, "PHONESET", 8) == 0)
         {
-            strncpy(gszPhoneNo, msg.m_pszNumber, PHONE_NO_MAX_CHARS);
-            gszPhoneNo[PHONE_NO_MAX_CHARS] = '\0';
+            memset(gszPhoneNo, '\0', sizeof(gszPhoneNo));
+            strncpy(gszPhoneNo, msg.m_pszNumber, sizeof(gszPhoneNo)-1);
 
             // store new number in EEPROM
-            for (char i = 0; i < PHONE_NO_MAX_CHARS; i++)
+            for (char i = 0; i < sizeof(gszPhoneNo); i++)
             {
-                if (gszPhoneNo[i] == '\0')
-                {
-                    for (; i < PHONE_NO_MAX_CHARS; i++)
-                    {
-                        EEPROM.write(i, '\0');
-                    }
-                    
-                    break;
-                }
-                else
-                {                
-                    EEPROM.write(i, gszPhoneNo[i]);
-                }
+                EEPROM.write(i, gszPhoneNo[i]);
             }
             
             // confirm command
@@ -512,12 +502,23 @@ void checkSupplyVoltage()
 /// arduino port and pin setup
 void setup()
 {
+    // setup/reset LCD module
+    // NOTE: always resets module, just in-case something went wrong with it
+    // NOTE: has to be done right after power on
+    LCD_SERIAL.begin(9600);
+    gLcd = new LcdScreen(LCD_SERIAL, 48, 32);
+    gLcd->reset();
+    
     // startup/programming delay before pins and interrupts are changed
     waitAndFlash(4000, 500, DEVICE_STATUS_LED_PIN);
 
     // set Mega pins 0 to 53 as inputs with pullups (leaves RX and TX pins alone)
     for (unsigned char i = 2; i <= 13; i++) {pinMode(i, INPUT_PULLUP);}
     for (unsigned char i = 20; i <= 53; i++) {pinMode(i, INPUT_PULLUP);}
+    
+    // setup LCD module
+    gLcdAnimator = new LcdAnimator(*gLcd, UPDOWN_PIN, LEFTRIGHT_PIN);
+    gLcdAnimator->setBlink(true);
     
     // setup alarm output pin
     pinMode(ALARM_OUTPUT_PIN, OUTPUT);
@@ -541,12 +542,6 @@ void setup()
     // setup GPRS module
     GPRS_SERIAL.begin(19200);
     gGprs = new GprsSms(GPRS_SERIAL, GPRS_POWER_PIN);
-    
-    // setup LCD module
-    LCD_SERIAL.begin(9600);
-    gLcd = new LcdScreen(LCD_SERIAL, 48, 32);
-    gLcdAnimator = new LcdAnimator(*gLcd, UPDOWN_PIN, LEFTRIGHT_PIN);
-    gLcdAnimator->setBlink(true);
     
     // write startup messages to LCD
     gLcdAnimator->setBackLightOn(millis() + 20000);        
@@ -593,12 +588,19 @@ void setup()
     gLcd->writeLine("phone no: %s", gszPhoneNo);
     
     // read phone no from EEPROM
+    memset(gszPhoneNo, '\0', sizeof(gszPhoneNo));
+    
     if (EEPROM.read(0) == '+')
     {
-        for (char i = 0; i < PHONE_NO_MAX_CHARS; i++)
+        for (char i = 0; i < sizeof(gszPhoneNo)-1; i++)
         {
-            gszPhoneNo[i] = EEPROM.read(i);
+            char ch = EEPROM.read(i);
+            gszPhoneNo[i] = ch;
         }
+    }
+    else
+    {
+        strncpy(gszPhoneNo, PHONE_NO_DEFAULT, sizeof(gszPhoneNo)-1);
     }
     
     // add base station tasks
